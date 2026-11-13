@@ -1,7 +1,7 @@
 import { createError } from "../errors.js";
 import { generateImageBuffer } from "../services/cloudflareAI.js";
 
-const MAX_PROMPT = 1500;
+const MAX_PROMPT = 15000;
 
 // Ако потребителят сам поиска рисунка/анимация/стил – не налагаме „снимка“
 const STYLE_WORDS =
