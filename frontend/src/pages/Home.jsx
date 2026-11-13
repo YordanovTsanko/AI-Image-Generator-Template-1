@@ -2,12 +2,13 @@ import React, { useEffect, useState } from "react";
 import styled from "styled-components";
 import { SearchBar } from "../components/SearchBar";
 import ImageCard from "../components/ImageCard";
-import axios from "axios";
-import { CircularProgress} from "@mui/material";
+import { CircularProgress } from "@mui/material";
+import { AutoAwesome } from "@mui/icons-material";
+import { useNavigate } from "react-router-dom";
+import { getPosts } from "../api";
 
 const Container = styled.div`
   height: 100%;
-  overflow-y: none;
   background: ${({ theme }) => theme.bg};
   padding: 30px 30px;
   padding-bottom: 50px;
@@ -43,13 +44,18 @@ const Span = styled.span`
 `;
 
 const Wrapper = styled.div`
-width: 100%;
-max-width: 1400px;
-padding: 32px 0px;
-display flex;
-justify-content: center;`;
+  width: 100%;
+  max-width: 1400px;
+  padding: 32px 0px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+`;
 
 const CardWrapper = styled.div`
+  width: 100%;
+  box-sizing: border-box;
   padding: 15px 20px;
   overflow: hidden;
   display: grid;
@@ -68,43 +74,108 @@ const CardWrapper = styled.div`
   }
 `;
 
+const Message = styled.h3`
+  font-weight: 500;
+  color: ${({ theme }) => theme.text_secondary};
+`;
+
+const RetryButton = styled.button`
+  border: none;
+  border-radius: 8px;
+  padding: 8px 18px;
+  font-weight: 600;
+  color: white;
+  background: ${({ theme }) => theme.primary};
+  cursor: pointer;
+`;
+
+const GenerateButton = styled.button`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 90%;
+  max-width: 550px;
+  padding: 18px 32px;
+  border: none;
+  border-radius: 14px;
+  font-family: inherit;
+  font-size: 20px;
+  font-weight: 700;
+  color: white;
+  cursor: pointer;
+  background: linear-gradient(135deg, ${({ theme }) => theme.primary}, ${({ theme }) => theme.secondary});
+  box-shadow: 0 8px 24px ${({ theme }) => theme.primary + "55"};
+  transition: all 0.25s ease;
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 30px ${({ theme }) => theme.primary + "77"};
+    filter: brightness(1.08);
+  }
+  &:active {
+    transform: translateY(0);
+  }
+  @media (max-width: 600px) {
+    font-size: 17px;
+    padding: 14px 20px;
+  }
+`;
+
 const Home = () => {
+  const navigate = useNavigate();
   const [posts, setPosts] = useState([]);
   const [postsLoading, setPostsLoading] = useState(true);
+  const [error, setError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
   const fetchPosts = async () => {
-    const imageResponse = await axios.get(`/api/post`);
-    setPosts(imageResponse.data.data);
-    setPostsLoading(false)
+    setPostsLoading(true);
+    setError("");
+    try {
+      setPosts(await getPosts());
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPostsLoading(false);
+    }
   };
-
-  const filteredPosts = posts.filter((item) =>
-    item.prompt.toLowerCase().includes(searchQuery.toLowerCase())
-  );
 
   useEffect(() => {
     fetchPosts();
   }, []);
 
+  const query = searchQuery.trim().toLowerCase();
+  const filteredPosts = posts.filter(
+    (item) => item.prompt?.toLowerCase().includes(query) || item.name?.toLowerCase().includes(query)
+  );
+
   return (
     <Container>
       <Headline>
-        Explore popluar posts in the Community! <Span>Generated with AI</Span>
+        Explore popular posts in the Community! <Span>Generated with AI</Span>
       </Headline>
       <SearchBar searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
+      <GenerateButton type="button" onClick={() => navigate("/post")}>
+        <AutoAwesome /> Generate Image
+      </GenerateButton>
       <Wrapper>
         {postsLoading ? (
           <>
             <CircularProgress size="2.5rem" color="secondary" />
-            <h3 style={{fontWeight: "500"}}>Loading . . .</h3>
+            <Message>Loading . . .</Message>
           </>
+        ) : error ? (
+          <>
+            <Message>{error}</Message>
+            <RetryButton onClick={fetchPosts}>Try again</RetryButton>
+          </>
+        ) : filteredPosts.length === 0 ? (
+          <Message>{query ? "No posts match your search" : "No posts yet – generate the first image!"}</Message>
         ) : (
           <CardWrapper>
-            {filteredPosts.length > 0 &&
-              filteredPosts.map((item, index) => (
-                <ImageCard key={index} item={item} />
-              ))}
+            {filteredPosts.map((item) => (
+              <ImageCard key={item._id} item={item} />
+            ))}
           </CardWrapper>
         )}
       </Wrapper>

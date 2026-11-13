@@ -1,11 +1,9 @@
 import React from "react";
 import styled from "styled-components";
-import Button from "./button";
-import { AddRounded, DarkMode, WbSunny } from "@mui/icons-material";
-import { useNavigate, useLocation } from "react-router-dom";
+import { DarkMode, WbSunny } from "@mui/icons-material";
+import { Link } from "react-router-dom";
 import { FormControlLabel, Switch } from "@mui/material";
-import "./Navbar.css"
-
+import { CloudflareBadge } from "./CloudflareStatus";
 
 const Container = styled.div`
   flex: 1;
@@ -23,57 +21,47 @@ const Container = styled.div`
   }
 `;
 
-const LogoTitle = styled.a`
+const LogoTitle = styled(Link)`
   text-decoration: none;
+  white-space: nowrap;
   color: ${({ theme }) => theme.text_primary};
+  @media only screen and (max-width: 600px) {
+    font-size: 17px;
+  }
+`;
+
+const Right = styled.div`
+  display: flex;
+  align-items: center;
+  /* Значката на Cloudflare е вдясно от превключвателя за тема */
+  & > button {
+    margin-right: 0;
+  }
+  .MuiFormControlLabel-root {
+    margin-right: 10px;
+  }
 `;
 
 const Navbar = ({ isDarkMode, setIsDarkMode }) => {
-  const naviagate = useNavigate();
-  const location = useLocation();
-  const path = location.pathname.split("/");
-
-  const handleThemeChange = (event) => {
-    setIsDarkMode(event.target.checked);
-  };
-
   return (
     <Container>
-      <LogoTitle href="/">Yordanov AI</LogoTitle>
-      <div style={{ display: "flex", alignItems: "center" }}>
+      <LogoTitle to="/">AI Image Generator</LogoTitle>
+      <Right>
         <FormControlLabel
           control={
             <Switch
               checked={isDarkMode}
-              onChange={handleThemeChange}
-              style={{color: "#fff"}}
-              icon={
-                <WbSunny
-                  style={{ color: "#000", transform: "translate(-2.1px,-1.5px)" }}
-                />
-              }
-              checkedIcon={
-                <DarkMode style={{ transform: "translate(2.1px,-1.5px)" }} />
-              }
+              onChange={(event) => setIsDarkMode(event.target.checked)}
+              inputProps={{ "aria-label": "Dark mode" }}
+              sx={{ "& .MuiSwitch-track": { backgroundColor: "rgb(116, 116, 116) !important" } }}
+              style={{ color: "#fff" }}
+              icon={<WbSunny style={{ color: "#000", transform: "translate(-2.1px,-1.5px)" }} />}
+              checkedIcon={<DarkMode style={{ transform: "translate(2.1px,-1.5px)" }} />}
             />
           }
         />
-        {path[1] === "post" ? (
-          <></>
-        ) : (
-          <Button
-            onClick={() => naviagate("/post")}
-            text="Generate Image"
-            leftIcon={
-              <AddRounded
-                style={{
-                  fontSize: "18px",
-                }}
-              />
-            }
-          />
-        )}
-      </div>
+        <CloudflareBadge />
+      </Right>
     </Container>
   );
 };

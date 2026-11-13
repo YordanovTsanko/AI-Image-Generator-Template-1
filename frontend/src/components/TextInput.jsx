@@ -12,7 +12,7 @@ const Label = styled.label`
   font-size: 12px;
   color: ${({ theme }) => theme.text_secondary};
   padding: 0px 4px;
-  text-transorm: uppercase;
+  text-transform: uppercase;
 `;
 
 const OutlinedInput = styled.div`
@@ -33,6 +33,7 @@ const OutlinedInput = styled.div`
 const Input = styled.input`
   width: 100%;
   font-size: 14px;
+  font-family: inherit;
   outline: none;
   border: none;
   resize: none;
@@ -40,32 +41,27 @@ const Input = styled.input`
   color: ${({ theme }) => theme.text_secondary};
   &:focus {
     outline: none;
-  
+  }
+  &:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+  }
 `;
 
-const TextInput = ({
-  label,
-  placeholder,
-  name,
-  value,
-  handleChange,
-  textArea,
-  rows,
-  columns,
-  isDisabled,
-}) => {
+const TextInput = ({ label, placeholder, name, value, handleChange, textArea, rows, isDisabled, maxLength }) => {
   return (
     <Container>
-      <Label>{label}</Label>
+      <Label htmlFor={name}>{label}</Label>
       <OutlinedInput>
         <Input
+          id={name}
           autoComplete="off"
           as={textArea ? "textarea" : "input"}
           name={name}
           rows={rows}
-          columns={columns}
           placeholder={placeholder}
           value={value}
+          maxLength={maxLength}
           disabled={isDisabled}
           onChange={(e) => handleChange(e)}
         />

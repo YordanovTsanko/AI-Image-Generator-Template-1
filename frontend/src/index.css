@@ -1,13 +1,43 @@
+/* Глобален шрифт – смени само тук, за да го промениш навсякъде */
+:root {
+  --app-font: 'Manrope Variable', 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+}
+
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family: var(--app-font);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Полета, бутони и MUI компоненти (известия, подсказки) също ползват шрифта */
+button,
+input,
+textarea,
+select,
+.MuiTypography-root,
+.MuiAlert-root,
+.MuiTooltip-tooltip {
+  font-family: var(--app-font) !important;
 }
 
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
+}
+
+/* Курсор „ръчичка“ навсякъде, където може да се цъка */
+button,
+[role='button'],
+a[href],
+label,
+select,
+summary,
+input[type='checkbox'],
+input[type='radio'] {
+  cursor: pointer;
+}
+button:disabled,
+[aria-disabled='true'] {
+  cursor: not-allowed;
 }

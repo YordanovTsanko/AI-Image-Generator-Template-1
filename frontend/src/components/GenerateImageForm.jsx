@@ -1,13 +1,16 @@
 import React from "react";
 import styled from "styled-components";
-import Button from "./button";
+import Button from "./Button";
 import TextInput from "./TextInput";
 import { AddToQueue, AutoAwesome, CreateRounded } from "@mui/icons-material";
-import axios from "axios";
+import { useNavigate } from "react-router-dom";
+import { createPost, generateImage } from "../api";
+import { useNotify } from "./Notifications";
+import { CloudflareBanner, useCloudflareStatus } from "./CloudflareStatus";
 
 const Form = styled.form`
   flex: 1;
-  padding: 16px 20px;
+  padding: 46px 20px;
   display: flex;
   flex-direction: column;
   gap: 9%;
@@ -17,6 +20,9 @@ const Top = styled.div`
   display: flex;
   flex-direction: column;
   gap: 6px;
+  & > [role="alert"] {
+    margin-top: 10px;
+  }
 `;
 const Title = styled.div`
   font-size: 28px;
@@ -41,72 +47,28 @@ const Actions = styled.div`
   display: flex;
   gap: 8px;
   margin-top: 15px;
+  flex-wrap: wrap;
 `;
 
-const GenerateImageForm = ({
-  post,
-  setPost,
-  postLoading,
-  setPostLoading,
-  imageLoading,
-  setImageLoading,
-}) => {
+const GenerateImageForm = ({ post, setPost, postLoading, setPostLoading, imageLoading, setImageLoading }) => {
+  const navigate = useNavigate();
+  const notify = useNotify();
+  const cloudflare = useCloudflareStatus();
+
   const handleError = (error) => {
-    console.log(error);
-    if (error.response) {
-      console.error(error.response);
-      alert(error.response.data.error);
-    } else {
-      console.error("An unexpected error occurred:", error.message);
-    }
+    console.error(error);
+    notify(error.message || "Something went wrong", error.code === "CF_LIMIT" ? "warning" : "error");
+    // Грешка от Cloudflare/мрежата → обновяваме статуса в навигацията
+    if (error.code?.startsWith("CF_") || error.code === "NETWORK") cloudflare.refresh(true);
   };
 
-  const generateImage = async () => {
-    let photoCode = "";
+  const generateImageFun = async () => {
     setImageLoading(true);
-    setPost({
-      ...post,
-      photo: "",
-    });
-
+    setPost((prev) => ({ ...prev, photo: "" }));
     try {
-      const res = await axios.post("/api/generateImage", {
-        prompt: post.prompt,
-      });
-
-      if (res?.data?.photoCode) {
-        photoCode = res.data.photoCode;
-        try {
-          const imageResponse = await axios.get(
-            `/api/generateImage/${res.data.photoCode}`
-          );
-
-          if (
-            imageResponse.data.status === "IN_PROGRESS" ||
-            imageResponse.data.status === "IN_QUEUE"
-          ) {
-            await new Promise((resolve) => setTimeout(resolve, 30000));
-            await fetchImageStatus(photoCode);
-          }
-
-          if (imageResponse.data.status === "FAILED") {
-            console.log(imageResponse.data.error);
-            throw new Error(imageResponse.data.error);
-          }
-          if (imageResponse.data.photo) {
-            console.log("Image generation completed:", imageResponse.data);
-            setImageLoading(false);
-            setPost({
-              ...post,
-              photo: imageResponse.data.photo,
-            });
-          }
-        } catch (error) {
-          handleError(error);
-        }
-      } else {
-        throw new Error("No photo code received");
-      }
+      const photo = await generateImage(post.prompt);
+      setPost((prev) => ({ ...prev, photo }));
+      if (cloudflare.status !== "connected") cloudflare.refresh(true);
     } catch (error) {
       handleError(error);
     } finally {
@@ -114,79 +76,42 @@ const GenerateImageForm = ({
     }
   };
 
-  const fetchImageStatus = async (code) => {
-    setImageLoading(true);
-    if (!code) {
-      alert("No photo code available to fetch the image.");
-      return;
-    }
-
-    try {
-      const imageResponse = await axios.get(`/api/generateImage/${code}`);
-
-      console.log(imageResponse.data);
-      if (
-        imageResponse.data.status === "IN_PROGRESS" ||
-        imageResponse.data.status === "IN_QUEUE"
-      ) {
-        await new Promise((resolve) => setTimeout(resolve, 30000));
-        await fetchImageStatus(code);
-      }
-
-      if (imageResponse.data.status === "FAILED") {
-        console.log(imageResponse.data.error);
-        throw new Error(imageResponse.data.error);
-      }
-      if (imageResponse.data.photo) {
-        setImageLoading(false);
-        setPost({
-          ...post,
-          photo: imageResponse.data.photo,
-        });
-      }
-    } catch (error) {
-      handleError(error);
-    }
-  };
-
   const createPostFun = async () => {
     setPostLoading(true);
     try {
-      console.log(post)
-      const res = await axios.post("/api/post", {
-        post,
-      });
-
-      console.log(res.data)
-      setPostLoading(false);
-      alert("Image posted succesfully");
+      await createPost(post);
+      notify("Image posted successfully", "success");
+      navigate("/");
     } catch (error) {
       handleError(error);
+    } finally {
+      setPostLoading(false);
     }
   };
 
   return (
-    <Form>
+    <Form onSubmit={(e) => e.preventDefault()}>
       <Top>
         <Title>Generate Image with prompt</Title>
-        <Desc>
-          Write your prompt according to the image you want to generate!
-        </Desc>
+        <Desc>Write your prompt according to the image you want to generate!</Desc>
+        <CloudflareBanner />
       </Top>
       <Body>
         <TextInput
           label="Author"
           placeholder="Enter your name . . ."
           name="name"
+          maxLength={60}
           value={post.name}
           handleChange={(e) => setPost({ ...post, name: e.target.value })}
         />
         <TextInput
           label="Image Prompt"
           placeholder="Write a detailed prompt about the image . . ."
-          name="name"
+          name="prompt"
           rows="8"
-          isDisabled={post.photo !== ""}
+          maxLength={2048}
+          isDisabled={post.photo !== "" || imageLoading}
           textArea
           value={post.prompt}
           handleChange={(e) => setPost({ ...post, prompt: e.target.value })}
@@ -199,35 +124,25 @@ const GenerateImageForm = ({
             text="New Photo"
             leftIcon={<AddToQueue />}
             type="secondary"
-          isLoading={postLoading}
-            onClick={() => {
-              setPost({
-                name: "",
-                prompt: "",
-                photo: "",
-              });
-            }}
+            isDisabled={postLoading}
+            onClick={() => setPost({ name: post.name, prompt: "", photo: "" })}
           />
         )}
 
         <Button
-          text="Generate Image"
+          text={post.photo ? "Regenerate" : "Generate Image"}
           leftIcon={<AutoAwesome />}
-          isLoading={imageLoading || postLoading}
-          isDisabled={post.name === "" || post.prompt === ""}
-          onClick={async () => {
-            await generateImage();
-          }}
+          isLoading={imageLoading}
+          isDisabled={post.name.trim() === "" || post.prompt.trim() === "" || postLoading}
+          onClick={generateImageFun}
         />
         <Button
           text="Post Image"
           type="green"
           leftIcon={<CreateRounded />}
           isLoading={postLoading}
-          isDisabled={
-            post.name === "" || post.prompt === "" || post.photo === ""
-          }
-          onClick={async () => createPostFun()}
+          isDisabled={post.name.trim() === "" || post.prompt.trim() === "" || post.photo === "" || imageLoading}
+          onClick={createPostFun}
         />
       </Actions>
     </Form>

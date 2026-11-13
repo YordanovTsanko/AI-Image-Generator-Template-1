@@ -20,7 +20,7 @@ const Image = styled.img`
   height: 100%;
   object-fit: cover;
   border-radius: 24px;
-  backgorund: ${({ theme }) => theme.black + 50};
+  background: ${({ theme }) => theme.black + 50};
 `;
 
 const LoadingDiv = styled.div`
@@ -37,10 +37,10 @@ const GeneratedImageCard = ({ src, loading }) => {
         <LoadingDiv>
           <CircularProgress sx={{ color: "yellow" }} size={30} />
           Generating your image . . .<br />
-          This may take up to 5 minutes
+          This usually takes a few seconds
         </LoadingDiv>
       ) : (
-        <>{src ? <Image src={src} /> : <>Write a prompt to generate image</>}</>
+        <>{src ? <Image src={src} alt="Generated" /> : <>Write a prompt to generate image</>}</>
       )}
     </Container>
   );
