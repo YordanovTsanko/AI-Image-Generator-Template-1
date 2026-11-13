@@ -2,12 +2,45 @@ import { createError } from "../errors.js";
 
 const API = process.env.CLOUDFLARE_API_BASE || "https://api.cloudflare.com/client/v4";
 
+const DEFAULT_MODEL = "@cf/black-forest-labs/flux-2-klein-9b";
+const FALLBACK_MODEL = "@cf/black-forest-labs/flux-1-schnell";
+
 const getToken = () => (process.env.CLOUDFLARE_API_TOKEN || "").trim();
-const getModel = () =>
-  (process.env.CLOUDFLARE_IMAGE_MODEL || "@cf/black-forest-labs/flux-1-schnell").trim();
-const getSteps = () => {
+const getModel = () => (process.env.CLOUDFLARE_IMAGE_MODEL || DEFAULT_MODEL).trim();
+const getSize = () => {
+  const n = parseInt(process.env.CLOUDFLARE_IMAGE_SIZE, 10);
+  return Number.isFinite(n) ? Math.min(Math.max(n, 512), 1536) : 1024;
+};
+const getSteps = (model = getModel()) => {
   const n = parseInt(process.env.CLOUDFLARE_IMAGE_STEPS, 10);
-  return Number.isFinite(n) ? Math.min(Math.max(n, 1), 8) : 8; // flux-1-schnell: максимум 8
+  if (/flux-1-schnell/.test(model)) return Number.isFinite(n) ? Math.min(Math.max(n, 1), 8) : 8; // максимум 8
+  if (/flux-2-dev/.test(model)) return Number.isFinite(n) ? Math.min(Math.max(n, 1), 50) : 28;
+  if (/lucid-origin|phoenix/.test(model)) return Number.isFinite(n) ? Math.min(Math.max(n, 1), 40) : 30;
+  return null; // flux-2-klein: стъпките са фиксирани от модела
+};
+
+// FLUX.2 моделите приемат само multipart/form-data
+const isMultipart = (model) => /flux-2/.test(model);
+
+/** Тялото на заявката според модела (всеки модел приема различни параметри). */
+const buildBody = (model, prompt) => {
+  const size = getSize();
+  const steps = getSteps(model);
+
+  if (isMultipart(model)) {
+    const form = new FormData();
+    form.append("prompt", prompt);
+    form.append("width", String(size));
+    form.append("height", String(size));
+    if (steps) form.append("steps", String(steps));
+    return { body: form, headers: {} }; // fetch сам слага multipart boundary
+  }
+
+  let json;
+  if (/flux-1-schnell/.test(model)) json = { prompt, steps };
+  else if (/lucid-origin|phoenix/.test(model)) json = { prompt, width: size, height: size, num_steps: steps };
+  else json = { prompt };
+  return { body: JSON.stringify(json), headers: { "Content-Type": "application/json" } };
 };
 
 let cachedAccountId = null;
@@ -18,6 +51,7 @@ const cfMessage = (body) =>
 // ---------------- Статус на връзката с Cloudflare ----------------
 // status: "unknown" | "connected" | "limit" | "error"
 const state = {
+  activeModel: null,
   status: "unknown",
   message: "",
   accountName: "",
@@ -56,8 +90,8 @@ const markError = (msg) => {
 
 export const getCloudflareStatus = () => ({
   ...state,
-  model: getModel(),
-  steps: getSteps(),
+  model: state.activeModel || getModel(),
+  steps: getSteps(state.activeModel || getModel()),
 });
 
 /** ID на акаунта – от .env или автоматично чрез токена. */
@@ -122,8 +156,42 @@ export const checkCloudflare = async ({ force = false } = {}) => {
 /** Проверка при стартиране – само логва, не спира сървъра. */
 export const verifyCloudflare = async () => {
   const s = await checkCloudflare({ force: true });
-  if (s.status === "connected") console.log(`🎨 Cloudflare AI: свързан · ${s.model} (${s.steps} стъпки)`);
+  if (s.status === "connected") console.log(`🎨 Cloudflare AI: свързан · ${s.model} · ${getSize()}x${getSize()}`);
   else console.error(`❌ Cloudflare AI: ${s.message}`);
+};
+
+// Моделът не съществува / няма достъп до него → пробваме резервния
+const isModelUnavailable = (status, msg) =>
+  (status === 400 || status === 404) && /no such model|model not found|not found|does not exist|not available|unknown model|5007/i.test(msg);
+
+/** Една заявка към конкретен модел. */
+const runModel = async (accountId, model, prompt) => {
+  const { body, headers } = buildBody(model, prompt);
+  let res;
+  try {
+    res = await fetch(`${API}/accounts/${accountId}/ai/run/${model}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${getToken()}`, ...headers },
+      body,
+      signal: AbortSignal.timeout(150_000),
+    });
+  } catch (err) {
+    if (err.name === "TimeoutError")
+      throw createError(504, "Cloudflare AI did not respond in time. Try again.", "CF_TIMEOUT");
+    markError(`Cannot reach Cloudflare: ${err.message}`);
+    throw createError(502, `Cannot reach Cloudflare AI: ${err.message}`, "CF_NETWORK");
+  }
+
+  const contentType = res.headers.get("content-type") || "";
+  // Някои модели връщат директно изображение (binary)
+  if (res.ok && contentType.startsWith("image/")) return { buffer: Buffer.from(await res.arrayBuffer()) };
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json?.success === false) return { status: res.status, msg: cfMessage(json) || res.statusText };
+
+  const b64 = json?.result?.image;
+  if (!b64) throw createError(502, "Cloudflare AI returned no image.", "CF_EMPTY");
+  return { buffer: Buffer.from(b64, "base64") };
 };
 
 /** Генерира снимка и връща JPEG като Buffer. */
@@ -138,57 +206,38 @@ export const generateImageBuffer = async (prompt) => {
     throw err;
   }
 
-  let res;
-  try {
-    res = await fetch(`${API}/accounts/${accountId}/ai/run/${getModel()}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${getToken()}`,
-        "Content-Type": "application/json",
-      },
-      // flux-1-schnell приема само prompt и steps
-      body: JSON.stringify({ prompt, steps: getSteps() }),
-      signal: AbortSignal.timeout(120_000),
-    });
-  } catch (err) {
-    if (err.name === "TimeoutError")
-      throw createError(504, "Cloudflare AI did not respond in time. Try again.", "CF_TIMEOUT");
-    markError(`Cannot reach Cloudflare: ${err.message}`);
-    throw createError(502, `Cannot reach Cloudflare AI: ${err.message}`, "CF_NETWORK");
-  }
-
-  const contentType = res.headers.get("content-type") || "";
-
-  // Някои модели връщат директно изображение (binary)
-  if (res.ok && contentType.startsWith("image/")) {
-    markConnected();
-    return Buffer.from(await res.arrayBuffer());
-  }
-
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok || body?.success === false) {
-    const msg = cfMessage(body);
-    if (res.status === 401 || res.status === 403) {
-      markError(`Invalid token or missing "Workers AI" permission. ${msg}`.trim());
-      throw createError(502, `Invalid Cloudflare token or missing "Workers AI" permission. ${msg}`.trim(), "CF_AUTH");
+  const models = [...new Set([getModel(), FALLBACK_MODEL])];
+  let result;
+  for (const model of models) {
+    result = await runModel(accountId, model, prompt);
+    if (result.buffer) {
+      state.activeModel = model;
+      markConnected();
+      return result.buffer;
     }
-    if (isLimitError(res.status, msg)) {
-      markLimit(msg);
-      throw createError(
-        429,
-        "The daily Cloudflare AI limit has been reached. It resets every day at 00:00 UTC.",
-        "CF_LIMIT"
-      );
+    if (isModelUnavailable(result.status, result.msg) && model !== models[models.length - 1]) {
+      console.warn(`⚠️  Моделът ${model} не е достъпен (${result.msg}) – превключвам към ${FALLBACK_MODEL}`);
+      continue;
     }
-    if (/capacity/i.test(msg))
-      throw createError(503, "Cloudflare AI is busy right now. Try again in a moment.", "CF_BUSY");
-    if (/nsfw|safety|flagged/i.test(msg))
-      throw createError(400, "The prompt was blocked by the safety filter. Try a different prompt.", "CF_NSFW");
-    throw createError(502, `Cloudflare AI error: ${msg || res.statusText}`, "CF_ERROR");
+    break;
   }
 
-  const b64 = body?.result?.image;
-  if (!b64) throw createError(502, "Cloudflare AI returned no image.", "CF_EMPTY");
-  markConnected();
-  return Buffer.from(b64, "base64");
+  const { status, msg } = result;
+  if (status === 401 || status === 403) {
+    markError(`Invalid token or missing "Workers AI" permission. ${msg}`.trim());
+    throw createError(502, `Invalid Cloudflare token or missing "Workers AI" permission. ${msg}`.trim(), "CF_AUTH");
+  }
+  if (isLimitError(status, msg)) {
+    markLimit(msg);
+    throw createError(
+      429,
+      "The daily Cloudflare AI limit has been reached. It resets every day at 00:00 UTC.",
+      "CF_LIMIT"
+    );
+  }
+  if (/capacity/i.test(msg))
+    throw createError(503, "Cloudflare AI is busy right now. Try again in a moment.", "CF_BUSY");
+  if (/nsfw|safety|flagged/i.test(msg))
+    throw createError(400, "The prompt was blocked by the safety filter. Try a different prompt.", "CF_NSFW");
+  throw createError(502, `Cloudflare AI error: ${msg}`, "CF_ERROR");
 };
